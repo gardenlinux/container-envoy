@@ -9,8 +9,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 WORKDIR="${WORKDIR:-${PROJECT_ROOT}/.build/envoy-fips-build}"
 IMAGE_NAME="${IMAGE_NAME:-gl-fips-envoy}"
 ARCH="${ARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}"
-VERSION="${VERSION:-1.40.0}"
-UPSTREAM_GIT_SHA="${UPSTREAM_GIT_SHA:-9e5580933739775e8bce696a57a2e1bc99368f23}"
+VERSION="${VERSION:-1.40.1}"
+UPSTREAM_GIT_SHA="${UPSTREAM_GIT_SHA:-86af01fdec40c31d025c495a4aa303c4126b2fd0}"
 BUILD_IMAGE="${BUILD_IMAGE:-docker.io/envoyproxy/envoy-build@sha256:0ec8c3295229234f5a5663b858d9e217fd409e2eba22afe7a9c6e4f634bd7ea8}"
 
 # --- prerequisites -----------------------------------------------------------
@@ -53,16 +53,17 @@ docker run --rm \
     --entrypoint /bin/bash \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     "${BUILD_IMAGE}" \
-    -c "mkdir -p /home/envoybuild/.cache/bazel && chown -R 1000:1000 /home/envoybuild/.cache/bazel"
+    -c "mkdir -p /home/envoybuild/.cache/bazel && chown -R $(id -u):$(id -g) /home/envoybuild/.cache/bazel"
 
 docker run --rm \
     --platform "linux/${ARCH}" \
-    -e USER_UID=1000 \
+    -e USER_UID="$(id -u)" \
     -v "${CLONE_DIR}:/source" \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     -w /source \
     "${BUILD_IMAGE}" \
     bash -c "
+        git config --global --add safe.directory /source
         sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
         bazel build \
             --config=openssl \
