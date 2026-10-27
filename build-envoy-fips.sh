@@ -33,13 +33,22 @@ CLONE_DIR="${PROJECT_ROOT}/.build/fips-port-envoy"
 if [ ! -d "${CLONE_DIR}" ]; then
     git clone "${REPO_URL}" "${CLONE_DIR}"
 fi
-( cd "${CLONE_DIR}" && git checkout "v${VERSION}" )
+( cd "${CLONE_DIR}" && git checkout "v${VERSION}" && git checkout -- . )
 
-# Apply local patches on top of the upstream checkout.
-for p in "${PROJECT_ROOT}/patches/"*.patch; do
-    [ -f "$p" ] || continue
-    patch -d "${CLONE_DIR}" -p1 --forward --reject-file=- < "$p"
-done
+# compat/openssl/prefixer/BUILD hardcodes amd64 libstdc++ sysroot include
+# paths.  On arm64 those paths don't exist so <cassert> is not found.
+# Fix by rewriting the two -isystem lines directly in the BUILD file before
+# Bazel reads it, using the correct paths for the current architecture.
+# We use direct file editing rather than a static patch + select() because
+# select() on exec-platform constraints is not reliable for host-tool targets.
+PREFIXER_BUILD="${CLONE_DIR}/compat/openssl/prefixer/BUILD"
+HOST_ARCH="$(uname -m)"
+if [ "${HOST_ARCH}" = "aarch64" ]; then
+    sed -i \
+        -e 's|sysroot_linux_amd64/usr/include/c++/13|sysroot_linux_arm64/usr/include/c++/13|g' \
+        -e 's|sysroot_linux_amd64/usr/include/x86_64-linux-gnu/c++/13|sysroot_linux_arm64/usr/include/aarch64-linux-gnu/c++/13|g' \
+        "${PREFIXER_BUILD}"
+fi
 
 # --- build envoy binary with Bazel + --config=openssl ------------------------
 
@@ -52,17 +61,10 @@ cat > "${WORKDIR}/bazel-build.sh" <<'ENDBUILD'
 set -euo pipefail
 git config --global --add safe.directory /source
 sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
-# On native arm64 runners Bazel must know the exec platform so the select()
-# in compat/openssl/prefixer/BUILD resolves to the arm64 sysroot includes.
-HOST_PLATFORM_FLAG=""
-if [ "$(uname -m)" = "aarch64" ]; then
-    HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"
-fi
 bazel build \
     --config=openssl \
     -c opt \
     --remote_download_toplevel \
-    ${HOST_PLATFORM_FLAG} \
     //source/exe:envoy-static \
     @su-exec
 ENDBUILD
