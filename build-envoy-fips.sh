@@ -65,10 +65,20 @@ docker run --rm \
     bash -c "
         git config --global --add safe.directory /source
         sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
+        # On native arm64 runners the exec-platform sysroot selection in
+        # envoy_toolshed resolves to the amd64 C++ include paths while the
+        # sysroot itself is arm64, causing <cassert> / libstdc++ not found for
+        # host-tool targets (e.g. compat/openssl/prefixer).  Explicitly pinning
+        # the host platform to the arm64 variant fixes the exec-config mismatch.
+        HOST_PLATFORM_FLAG=""
+        if [ "\$(uname -m)" = "aarch64" ]; then
+            HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"
+        fi
         bazel build \
             --config=openssl \
             -c opt \
             --remote_download_toplevel \
+            \${HOST_PLATFORM_FLAG} \
             //source/exe:envoy-static \
             @su-exec
     "
