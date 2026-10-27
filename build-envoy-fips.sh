@@ -35,6 +35,12 @@ if [ ! -d "${CLONE_DIR}" ]; then
 fi
 ( cd "${CLONE_DIR}" && git checkout "v${VERSION}" )
 
+# Apply local patches on top of the upstream checkout.
+for p in "${PROJECT_ROOT}/patches/"*.patch; do
+    [ -f "$p" ] || continue
+    patch -d "${CLONE_DIR}" -p1 --forward --reject-file=- < "$p"
+done
+
 # --- build envoy binary with Bazel + --config=openssl ------------------------
 
 mkdir -p "${WORKDIR}"
@@ -46,11 +52,8 @@ cat > "${WORKDIR}/bazel-build.sh" <<'ENDBUILD'
 set -euo pipefail
 git config --global --add safe.directory /source
 sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
-# On native arm64 runners the exec-platform sysroot selection in
-# envoy_toolshed resolves to the amd64 C++ include paths while the
-# sysroot itself is arm64, causing <cassert> / libstdc++ not found for
-# host-tool targets (e.g. compat/openssl/prefixer).  Explicitly pinning
-# the host platform to the arm64 variant fixes the exec-config mismatch.
+# On native arm64 runners Bazel must know the exec platform so the select()
+# in compat/openssl/prefixer/BUILD resolves to the arm64 sysroot includes.
 HOST_PLATFORM_FLAG=""
 if [ "$(uname -m)" = "aarch64" ]; then
     HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"

@@ -1,0 +1,27 @@
+--- a/compat/openssl/prefixer/BUILD
++++ b/compat/openssl/prefixer/BUILD
+@@ -13,12 +13,18 @@
+         "-fno-rtti",  # Required by libclang-cpp
+         # Use libstdc++ for ABI compatibility with libclang-cpp
+         "-stdlib=libstdc++",
+-        # -isystem paths for the LLVM headers and the libstdc++ headers from the
+-        # sysroot. These reference external repositories by their on-disk
+-        # (canonical) name as materialised by bzlmod.
+-        "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_amd64/usr/include/c++/13",
+-        "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_amd64/usr/include/x86_64-linux-gnu/c++/13",
+-    ],
++        # -isystem paths for libstdc++ headers, selected by execution platform.
++        # The sysroot repos are materialised by bzlmod under their canonical names.
++    ] + select({
++        "//bazel/platforms:linux_arm64": [
++            "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_arm64/usr/include/c++/13",
++            "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_arm64/usr/include/aarch64-linux-gnu/c++/13",
++        ],
++        "//conditions:default": [
++            "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_amd64/usr/include/c++/13",
++            "-isystem external/envoy_toolshed++sysroot_extension+sysroot_linux_amd64/usr/include/x86_64-linux-gnu/c++/13",
++        ],
++    }),
+     linkopts = [
+         "$(location " + LIBCLANG_CPP + ")",
+     ] + (["$(location " + LIBLLVM + ")"] if LIBLLVM else []) + [
