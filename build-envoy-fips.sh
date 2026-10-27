@@ -39,16 +39,33 @@ fi
 
 mkdir -p "${WORKDIR}"
 
-# Run bazel build inside the envoy-build container.
-# A named Docker volume is used for the Bazel cache so incremental rebuilds
-# are fast.  The source tree is bind-mounted read-write so Bazel can write
-# its bazel-bin symlink forest.
-#
-# The entrypoint of envoy-build expects USER_UID and then drops to the
-# envoybuild (uid 1000) user via gosu.  The cache volume must be owned by
-# uid 1000 before the first run, so we initialise it with --entrypoint override.
-# --jobs=HOST_CPUS overrides the .bazelrc default of HOST_CPUS-1, which would
-# evaluate to 0 in single-CPU containers and cause Bazel to reject the build.
+# Write the inner build script to a file and bind-mount it into the container.
+# A heredoc piped into `docker run` is unreliable: docker may consume stdin
+# while pulling the image, so the script never reaches bash inside.
+cat > "${WORKDIR}/bazel-build.sh" <<'ENDBUILD'
+set -euo pipefail
+git config --global --add safe.directory /source
+sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
+# On native arm64 runners the exec-platform sysroot selection in
+# envoy_toolshed resolves to the amd64 C++ include paths while the
+# sysroot itself is arm64, causing <cassert> / libstdc++ not found for
+# host-tool targets (e.g. compat/openssl/prefixer).  Explicitly pinning
+# the host platform to the arm64 variant fixes the exec-config mismatch.
+HOST_PLATFORM_FLAG=""
+if [ "$(uname -m)" = "aarch64" ]; then
+    HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"
+fi
+bazel build \
+    --config=openssl \
+    -c opt \
+    --remote_download_toplevel \
+    ${HOST_PLATFORM_FLAG} \
+    //source/exe:envoy-static \
+    @su-exec
+ENDBUILD
+
+# Initialise the Bazel cache volume with the correct ownership before the
+# build user (envoybuild, uid from USER_UID) tries to write to it.
 docker run --rm \
     --entrypoint /bin/bash \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
@@ -59,29 +76,11 @@ docker run --rm \
     --platform "linux/${ARCH}" \
     -e USER_UID="$(id -u)" \
     -v "${CLONE_DIR}:/source" \
+    -v "${WORKDIR}:/build" \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     -w /source \
     "${BUILD_IMAGE}" \
-    bash <<'ENDBUILD'
-        git config --global --add safe.directory /source
-        sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
-        # On native arm64 runners the exec-platform sysroot selection in
-        # envoy_toolshed resolves to the amd64 C++ include paths while the
-        # sysroot itself is arm64, causing <cassert> / libstdc++ not found for
-        # host-tool targets (e.g. compat/openssl/prefixer).  Explicitly pinning
-        # the host platform to the arm64 variant fixes the exec-config mismatch.
-        HOST_PLATFORM_FLAG=""
-        if [ "$(uname -m)" = "aarch64" ]; then
-            HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"
-        fi
-        bazel build \
-            --config=openssl \
-            -c opt \
-            --remote_download_toplevel \
-            ${HOST_PLATFORM_FLAG} \
-            //source/exe:envoy-static \
-            @su-exec
-ENDBUILD
+    bash /build/bazel-build.sh
 
 # Copy artifacts out of the build container (bazel-bin is a symlink into the
 # Docker volume which is not accessible on the host filesystem directly).
