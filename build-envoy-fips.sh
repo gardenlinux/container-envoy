@@ -62,7 +62,7 @@ docker run --rm \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     -w /source \
     "${BUILD_IMAGE}" \
-    bash -c "
+    bash <<'ENDBUILD'
         git config --global --add safe.directory /source
         sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
         # On native arm64 runners the exec-platform sysroot selection in
@@ -71,17 +71,17 @@ docker run --rm \
         # host-tool targets (e.g. compat/openssl/prefixer).  Explicitly pinning
         # the host platform to the arm64 variant fixes the exec-config mismatch.
         HOST_PLATFORM_FLAG=""
-        if [ "\$(uname -m)" = "aarch64" ]; then
+        if [ "$(uname -m)" = "aarch64" ]; then
             HOST_PLATFORM_FLAG="--host_platform=//bazel/platforms:linux_arm64"
         fi
         bazel build \
             --config=openssl \
             -c opt \
             --remote_download_toplevel \
-            \${HOST_PLATFORM_FLAG} \
+            ${HOST_PLATFORM_FLAG} \
             //source/exe:envoy-static \
             @su-exec
-    "
+ENDBUILD
 
 # Copy artifacts out of the build container (bazel-bin is a symlink into the
 # Docker volume which is not accessible on the host filesystem directly).
