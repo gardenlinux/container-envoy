@@ -9,8 +9,8 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 WORKDIR="${WORKDIR:-${PROJECT_ROOT}/.build/envoy-fips-build}"
 IMAGE_NAME="${IMAGE_NAME:-gl-fips-envoy}"
 ARCH="${ARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}"
-VERSION="${VERSION:-1.40.0}"
-UPSTREAM_GIT_SHA="${UPSTREAM_GIT_SHA:-9e5580933739775e8bce696a57a2e1bc99368f23}"
+VERSION="${VERSION:-1.40.1}"
+UPSTREAM_GIT_SHA="${UPSTREAM_GIT_SHA:-86af01fdec40c31d025c495a4aa303c4126b2fd0}"
 BUILD_IMAGE="${BUILD_IMAGE:-docker.io/envoyproxy/envoy-build@sha256:0ec8c3295229234f5a5663b858d9e217fd409e2eba22afe7a9c6e4f634bd7ea8}"
 
 # --- prerequisites -----------------------------------------------------------
@@ -33,44 +33,59 @@ CLONE_DIR="${PROJECT_ROOT}/.build/fips-port-envoy"
 if [ ! -d "${CLONE_DIR}" ]; then
     git clone "${REPO_URL}" "${CLONE_DIR}"
 fi
-( cd "${CLONE_DIR}" && git checkout "v${VERSION}" )
+( cd "${CLONE_DIR}" && git checkout "v${VERSION}" && git checkout -- . )
+
+# compat/openssl/prefixer/BUILD hardcodes amd64 libstdc++ sysroot include
+# paths.  On arm64 those paths don't exist so <cassert> is not found.
+# Fix by rewriting the two -isystem lines directly in the BUILD file before
+# Bazel reads it, using the correct paths for the current architecture.
+# We use direct file editing rather than a static patch + select() because
+# select() on exec-platform constraints is not reliable for host-tool targets.
+PREFIXER_BUILD="${CLONE_DIR}/compat/openssl/prefixer/BUILD"
+HOST_ARCH="$(uname -m)"
+if [ "${HOST_ARCH}" = "aarch64" ]; then
+    sed -i \
+        -e 's|sysroot_linux_amd64/usr/include/c++/13|sysroot_linux_arm64/usr/include/c++/13|g' \
+        -e 's|sysroot_linux_amd64/usr/include/x86_64-linux-gnu/c++/13|sysroot_linux_arm64/usr/include/aarch64-linux-gnu/c++/13|g' \
+        "${PREFIXER_BUILD}"
+fi
 
 # --- build envoy binary with Bazel + --config=openssl ------------------------
 
 mkdir -p "${WORKDIR}"
 
-# Run bazel build inside the envoy-build container.
-# A named Docker volume is used for the Bazel cache so incremental rebuilds
-# are fast.  The source tree is bind-mounted read-write so Bazel can write
-# its bazel-bin symlink forest.
-#
-# The entrypoint of envoy-build expects USER_UID and then drops to the
-# envoybuild (uid 1000) user via gosu.  The cache volume must be owned by
-# uid 1000 before the first run, so we initialise it with --entrypoint override.
-# --jobs=HOST_CPUS overrides the .bazelrc default of HOST_CPUS-1, which would
-# evaluate to 0 in single-CPU containers and cause Bazel to reject the build.
+# Write the inner build script to a file and bind-mount it into the container.
+# A heredoc piped into `docker run` is unreliable: docker may consume stdin
+# while pulling the image, so the script never reaches bash inside.
+cat > "${WORKDIR}/bazel-build.sh" <<'ENDBUILD'
+set -euo pipefail
+git config --global --add safe.directory /source
+sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
+bazel build \
+    --config=openssl \
+    -c opt \
+    --remote_download_toplevel \
+    //source/exe:envoy-static \
+    @su-exec
+ENDBUILD
+
+# Initialise the Bazel cache volume with the correct ownership before the
+# build user (envoybuild, uid from USER_UID) tries to write to it.
 docker run --rm \
     --entrypoint /bin/bash \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     "${BUILD_IMAGE}" \
-    -c "mkdir -p /home/envoybuild/.cache/bazel && chown -R 1000:1000 /home/envoybuild/.cache/bazel"
+    -c "mkdir -p /home/envoybuild/.cache/bazel && chown -R $(id -u):$(id -g) /home/envoybuild/.cache/bazel"
 
 docker run --rm \
     --platform "linux/${ARCH}" \
-    -e USER_UID=1000 \
+    -e USER_UID="$(id -u)" \
     -v "${CLONE_DIR}:/source" \
+    -v "${WORKDIR}:/build" \
     -v "envoy-bazel-cache-${ARCH}:/home/envoybuild/.cache/bazel" \
     -w /source \
     "${BUILD_IMAGE}" \
-    bash -c "
-        sed -i 's/^build --jobs=HOST_CPUS-1/build --jobs=HOST_CPUS/' .bazelrc
-        bazel build \
-            --config=openssl \
-            -c opt \
-            --remote_download_toplevel \
-            //source/exe:envoy-static \
-            @su-exec
-    "
+    bash /build/bazel-build.sh
 
 # Copy artifacts out of the build container (bazel-bin is a symlink into the
 # Docker volume which is not accessible on the host filesystem directly).

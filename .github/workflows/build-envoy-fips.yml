@@ -1,12 +1,15 @@
 name: Build FIPS Envoy image
 
 on:
+  push:
+    branches:
+      - 'release/**'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Upstream version to build (e.g. 1.40.0)'
+        description: 'Upstream version to build (e.g. 1.40.1)'
         required: false
-        default: '1.40.0'
+        default: '1.40.1'
 
 permissions:
   packages: write
@@ -23,9 +26,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push amd64 image
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/gl-fips-envoy
         run: |
+          VERSION="${VERSION#release/v}"
+          VERSION="${VERSION#release/}"
           bash build-envoy-fips.sh
           docker push ghcr.io/${{ github.repository_owner }}/gl-fips-envoy:${VERSION}-amd64
 
@@ -40,9 +45,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push arm64 image
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
           IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/gl-fips-envoy
         run: |
+          VERSION="${VERSION#release/v}"
+          VERSION="${VERSION#release/}"
           bash build-envoy-fips.sh
           docker push ghcr.io/${{ github.repository_owner }}/gl-fips-envoy:${VERSION}-arm64
 
@@ -57,8 +64,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Create and push manifest list
         env:
-          VERSION: ${{ github.event.inputs.version }}
+          VERSION: ${{ github.event.inputs.version || github.ref_name }}
         run: |
+          VERSION="${VERSION#release/v}"
+          VERSION="${VERSION#release/}"
           docker manifest create \
             ghcr.io/${{ github.repository_owner }}/gl-fips-envoy:${VERSION} \
             ghcr.io/${{ github.repository_owner }}/gl-fips-envoy:${VERSION}-amd64 \
