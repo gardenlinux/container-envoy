@@ -9,7 +9,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
 WORKDIR="${WORKDIR:-${PROJECT_ROOT}/.build/envoy-fips-build}"
 IMAGE_NAME="${IMAGE_NAME:-gl-fips-envoy}"
 ARCH="${ARCH:-$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')}"
-VERSION="${VERSION:-1.40.1}"
+VERSION="${VERSION:-1.40.2}"
 UPSTREAM_GIT_SHA="${UPSTREAM_GIT_SHA:-86af01fdec40c31d025c495a4aa303c4126b2fd0}"
 BUILD_IMAGE="${BUILD_IMAGE:-docker.io/envoyproxy/envoy-build@sha256:0ec8c3295229234f5a5663b858d9e217fd409e2eba22afe7a9c6e4f634bd7ea8}"
 
