@@ -112,7 +112,7 @@ jobs:
             git checkout -b "${BRANCH}"
           fi
 
-          sed -i "s/^\(VERSION="${VERSION:-\)[^}]*/\1${VERSION}/" \
+          sed -i "s|^VERSION="${VERSION:-[^}]*}"|VERSION="${VERSION:-${VERSION}}"|" \
             build-envoy-fips.sh
 
           git add build-envoy-fips.sh
