@@ -2,7 +2,7 @@ name: Check upstream Envoy release
 
 on:
   schedule:
-    - cron: '17 6 * * *'
+    - cron: '20 2 * * *'
   workflow_dispatch:
     inputs:
       upstream_repo:
